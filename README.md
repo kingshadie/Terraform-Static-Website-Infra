@@ -5,9 +5,14 @@ Download
 
 This project provisions AWS infrastructure for hosting a static website using S3, CloudFront, and Terraform.
 
+## Architecture Diagram
+
+![arch diagram](https://github.com/user-attachments/assets/1bd861ae-f836-4e27-a58c-de771aaf6674)
+
 ## Screenshot of Deployed Website
 
-![Website Screenshot](./Screenshot%202025-04-19%20at%2017.41.19.png)
+![Screenshot 2025-04-23 at 15 48 02](https://github.com/user-attachments/assets/c5cd1c4d-de68-489e-be7f-c409e789678d)
+
 *Welcome page of our startup website hosted on AWS*
 
 ## How to Run This Project
