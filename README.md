@@ -26,8 +26,8 @@ This project provisions AWS infrastructure for hosting a static website using S3
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/your-repo/static-website-iac.git
-   cd static-website-iac
+   git clone https://github.com/kingshadie/Terraform-Static-Website-Infra.git
+   cd Terraform-Static-Website-Infra
 Initialize Terraform:
 bash
 Copy
