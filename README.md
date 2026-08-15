@@ -103,3 +103,7 @@ If you encounter:
 403 Forbidden errors: Verify the S3 bucket policy was applied correctly
 SSL warnings: Ensure you're accessing via the CloudFront URL (https://)
 Timeout errors: CloudFront deployments can take 15-30 minutes
+
+## What i learned
+
+S3 public-read bucket policies and CloudFront don't propagate in sync. A policy change applies to S3 immediately, but CloudFront can keep serving a cached 403 or stale response for several minutes after terraform apply finishes. That gap between "Terraform says done" and "the world actually sees it" is the real operational lesson. Infrastructure-as-code guarantees the resource state, not the propagation timeline.
