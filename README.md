@@ -1,6 +1,3 @@
-markdown
-Copy
-Download
 # Terraform AWS Static Website Hosting
 
 This project provisions AWS infrastructure for hosting a static website using S3, CloudFront, and Terraform.
@@ -18,9 +15,20 @@ This project provisions AWS infrastructure for hosting a static website using S3
 ## How to Run This Project
 
 ### Prerequisites
-- Terraform v1.0+ installed
+- Terraform v1.10+ installed (needed for native S3 state locking)
 - AWS account with credentials configured
 - AWS CLI configured with proper permissions
+
+### One-time setup: create the state bucket
+
+Terraform's state file has to live somewhere before Terraform can manage anything else, so this one bucket is created by hand, once:
+
+```bash
+aws s3api create-bucket --bucket YOUR-UNIQUE-STATE-BUCKET-NAME --region us-east-1
+aws s3api put-bucket-versioning --bucket YOUR-UNIQUE-STATE-BUCKET-NAME --versioning-configuration Status=Enabled
+```
+
+Then put that same bucket name into the `backend "s3"` block in `main.tf`.
 
 ### Deployment Steps
 
@@ -28,82 +36,80 @@ This project provisions AWS infrastructure for hosting a static website using S3
    ```bash
    git clone https://github.com/kingshadie/Terraform-Static-Website-Infra.git
    cd Terraform-Static-Website-Infra
-Initialize Terraform:
-bash
-Copy
-Download
-terraform init
-Review the execution plan:
-bash
-Copy
-Download
-terraform plan
-Deploy the infrastructure:
-bash
-Copy
-Download
-terraform apply
-Type yes when prompted to confirm.
-Access your website:
-bash
-Copy
-Download
-curl $(terraform output -raw website_url)
-Or open the URL in your browser.
-Clean Up
+   ```
+2. Initialize Terraform:
+   ```bash
+   terraform init
+   ```
+3. Review the execution plan:
+   ```bash
+   terraform plan
+   ```
+4. Deploy the infrastructure:
+   ```bash
+   terraform apply
+   ```
+   Type `yes` when prompted to confirm.
+5. Access your website:
+   ```bash
+   curl $(terraform output -raw website_url)
+   ```
+   Or open the URL in your browser.
+
+### Clean Up
 
 To destroy all created resources:
-
-bash
-Copy
-Download
+```bash
 terraform destroy
-Resource Overview
+```
 
-Resource	Purpose	Key Features
-AWS S3 Bucket	Hosts static website files	- Public read access
-- Website configuration
-- Stores HTML/CSS/JS files
-CloudFront Distribution	Content delivery network	- HTTPS encryption
-- Global edge caching
-- Default SSL certificate
-S3 Bucket Policy	Controls access to S3	- Allows public read access
-- Restricts to GET requests only
-Terraform Config	Infrastructure as Code	- Automated provisioning
-- Version controlled setup
-- Repeatable deployments
-Key Components Explained
+## Resource Overview
 
-S3 Website Hosting:
-Stores all static assets (HTML, CSS, JS, images)
-Configured with index.html and error.html documents
-Public access enabled through bucket policy
-CloudFront CDN:
-Provides HTTPS encryption automatically
-Caches content at edge locations worldwide
-Serves content faster to global users
-Uses default *.cloudfront.net SSL certificate
-Terraform Automation:
-Creates all resources in a single command
-Manages dependencies between resources
-Outputs the CloudFront URL when complete
-Customization Options
+| Resource | Purpose | Key Features |
+|---|---|---|
+| AWS S3 Bucket | Stores static website files | Fully private - no direct public access |
+| CloudFront Origin Access Control | Lets CloudFront read the private bucket | Only this distribution can use it |
+| CloudFront Distribution | Content delivery network | HTTPS encryption, global edge caching |
+| S3 Bucket Policy | Controls access to S3 | Allows reads only from this CloudFront distribution |
+| Terraform Config | Infrastructure as Code | Remote state in S3, automated provisioning |
+
+## Key Components Explained
+
+**S3 bucket (private):**
+- Stores all static assets (HTML, CSS, JS, images)
+- All public access is blocked at the bucket level
+- The only reader allowed is this specific CloudFront distribution, via Origin Access Control
+
+**CloudFront CDN:**
+- Provides HTTPS encryption automatically
+- Caches content at edge locations worldwide
+- Authenticates to S3 using Origin Access Control instead of a public bucket
+- Serves `error.html` on a 404
+
+**Terraform automation:**
+- State is stored remotely in S3, with locking, instead of only on one machine
+- Creates all resources in a single command
+- Outputs the CloudFront URL when complete
+
+## Customization Options
 
 To change the website content:
-Modify files in the website/ directory
-Re-run terraform apply
+- Modify files in the `website/` directory
+- Re-run `terraform apply`
+
 To add a custom domain:
-Uncomment the ACM certificate resource
-Add Route 53 DNS records
-Update CloudFront aliases
-Troubleshooting
+- Uncomment the ACM certificate resource
+- Add Route 53 DNS records
+- Update CloudFront aliases
 
-If you encounter:
+## Troubleshooting
 
-403 Forbidden errors: Verify the S3 bucket policy was applied correctly
-SSL warnings: Ensure you're accessing via the CloudFront URL (https://)
-Timeout errors: CloudFront deployments can take 15-30 minutes
+- **403 Forbidden errors:** verify the bucket policy and Origin Access Control were both applied - a private bucket with no OAC returns 403 on everything.
+- **SSL warnings:** make sure you're accessing via the CloudFront URL (`https://...cloudfront.net`), not the S3 URL directly.
+- **Timeout errors:** CloudFront deployments can take 15-30 minutes.
 
-## What i learned
+## What I Learned
 
-S3 public-read bucket policies and CloudFront don't propagate in sync. A policy change applies to S3 immediately, but CloudFront can keep serving a cached 403 or stale response for several minutes after terraform apply finishes. That gap between "Terraform says done" and "the world actually sees it" is the real operational lesson. Infrastructure-as-code guarantees the resource state, not the propagation timeline.
+S3 public-read bucket policies and CloudFront don't propagate in sync. A policy change applies to S3 immediately, but CloudFront can keep serving a cached 403 or stale response for several minutes after `terraform apply` finishes. That gap between "Terraform says done" and "the world actually sees it" is the real operational lesson. Infrastructure-as-code guarantees the resource state, not the propagation timeline.
+
+I also moved this project off a public S3 bucket and onto CloudFront Origin Access Control - the earlier version granted `s3:GetObject` to everyone (`principal = "*"`), which technically worked but broke the least-privilege standard I'd want to hold any change to in review. Least privilege applies to your own infrastructure, not just the changes you're reviewing for someone else.

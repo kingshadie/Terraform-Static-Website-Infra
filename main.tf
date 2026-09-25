@@ -5,6 +5,19 @@ terraform {
       version = "~> 5.0"
     }
   }
+
+  # Remote state: the state file lives in S3 instead of on your laptop.
+  # use_lockfile stops two people (or two terraform apply runs) from
+  # touching the state at the same time.
+  # NOTE: you must create this bucket by hand ONE TIME before this works -
+  # see the walkthrough for the exact command.
+  backend "s3" {
+    bucket       = "REPLACE-WITH-YOUR-UNIQUE-BUCKET-NAME"
+    key          = "static-website/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
+  }
 }
 
 provider "aws" {
@@ -13,31 +26,34 @@ provider "aws" {
 
 # Create S3 bucket for static website
 resource "aws_s3_bucket" "website_bucket" {
-  bucket = "${var.bucket_name}-${random_id.bucket_suffix.hex}"
+  bucket        = "${var.bucket_name}-${random_id.bucket_suffix.hex}"
   force_destroy = true # For easier cleanup during development
 }
 
-resource "aws_s3_bucket_website_configuration" "website_config" {
-  bucket = aws_s3_bucket.website_bucket.id
-
-  index_document {
-    suffix = "index.html"
-  }
-
-  error_document {
-    key = "error.html"
-  }
-}
-
+# Block every public-access setting. Nobody on the internet can read this
+# bucket directly - only CloudFront can, and only through the policy below.
 resource "aws_s3_bucket_public_access_block" "public_access" {
   bucket = aws_s3_bucket.website_bucket.id
 
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }
 
+# Origin Access Control: this is CloudFront's "ID badge" that lets it read
+# from a private S3 bucket. Nothing else can use this badge.
+resource "aws_cloudfront_origin_access_control" "website_oac" {
+  name                              = "${var.bucket_name}-oac"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+# The bucket policy now names ONE allowed reader (CloudFront's service
+# identity) and ONE allowed source (this exact distribution) instead of "*".
+# This is the least-privilege check you described in the interview, applied
+# for real.
 resource "aws_s3_bucket_policy" "bucket_policy" {
   bucket = aws_s3_bucket.website_bucket.id
   policy = data.aws_iam_policy_document.bucket_policy.json
@@ -46,8 +62,8 @@ resource "aws_s3_bucket_policy" "bucket_policy" {
 data "aws_iam_policy_document" "bucket_policy" {
   statement {
     principals {
-      type        = "*"
-      identifiers = ["*"]
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
     }
 
     actions = [
@@ -57,31 +73,21 @@ data "aws_iam_policy_document" "bucket_policy" {
     resources = [
       "${aws_s3_bucket.website_bucket.arn}/*",
     ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [aws_cloudfront_distribution.website_distribution.arn]
+    }
   }
 }
-
-# Create ACM certificate
-#resource "aws_acm_certificate" "cloudfront_cert" {
-  #domain_name       = "*.cloudfront.net"
-  #validation_method = "DNS"
-
-  #lifecycle {
-    #create_before_destroy = true
-  #}
-#}
 
 # Create CloudFront distribution
 resource "aws_cloudfront_distribution" "website_distribution" {
   origin {
-    domain_name = aws_s3_bucket.website_bucket.bucket_regional_domain_name
-    origin_id   = "S3-${aws_s3_bucket.website_bucket.bucket}"
-
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "http-only"
-      origin_ssl_protocols   = ["TLSv1.2"]
-    }
+    domain_name              = aws_s3_bucket.website_bucket.bucket_regional_domain_name
+    origin_id                = "S3-${aws_s3_bucket.website_bucket.bucket}"
+    origin_access_control_id = aws_cloudfront_origin_access_control.website_oac.id
   }
 
   enabled             = true
@@ -104,6 +110,14 @@ resource "aws_cloudfront_distribution" "website_distribution" {
     min_ttl                = 0
     default_ttl            = 3600
     max_ttl                = 86400
+  }
+
+  # S3 "website hosting mode" is off now (OAC doesn't work with it), so
+  # CloudFront has to be the one that serves error.html on a bad request.
+  custom_error_response {
+    error_code         = 404
+    response_code      = 404
+    response_page_path = "/error.html"
   }
 
   price_class = "PriceClass_100"
@@ -147,3 +161,4 @@ locals {
     "txt"  = "text/plain"
   }
 }
+
